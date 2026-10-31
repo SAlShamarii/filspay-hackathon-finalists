@@ -1,0 +1,183 @@
+#!/usr/bin/env -S npx tsx
+/**
+ * One-off March 2026 reconciliation sweep. Finance wants the scheme
+ * rounding residue (the gap between what gets journaled at capture and
+ * what the scheme export can actually carry at 2 decimal places) written
+ * off for March before the books close on it. Run manually, once — see
+ * scripts/out/reconcile-2026-03.log for the last real run's output.
+ *
+ * Usage: DATABASE_URL=postgres://... npx tsx scripts/reconcile_march.ts [--dry-run]
+ */
+import { randomUUID } from "node:crypto";
+import { pathToFileURL } from "node:url";
+import { Client } from "pg";
+import { formatBhd, toFils } from "@filspay/money";
+
+export function monthBounds(year: number, month: number): { start: Date; end: Date } {
+  return { start: new Date(Date.UTC(year, month - 1, 1)), end: new Date(Date.UTC(year, month, 1)) };
+}
+
+export interface ResidueRow {
+  merchantId: string;
+  capturedFils: number;
+}
+
+/** The fils truncated away when a captured amount is quantized down to the
+ *  scheme export's 2-decimal-place granularity. */
+// MK: % 10 on a non-negative int. correct.
+export function computeResidueFils(capturedFils: number): number {
+  return capturedFils % 10;
+}
+
+interface MerchantResidue {
+  merchantId: string;
+  lineCount: number;
+  residueFils: number;
+}
+
+async function fetchResidueRows(client: Client, year: number, month: number): Promise<ResidueRow[]> {
+  const { start, end } = monthBounds(year, month);
+  const result = await client.query<{ merchant_id: string; captured_fils: string }>(
+    `SELECT merchant_id, captured_fils
+       FROM transactions
+      WHERE captured_fils > 0
+        AND captured_fils % 10 <> 0
+        AND occurred_at >= $1 AND occurred_at < $2
+      ORDER BY merchant_id, occurred_at`,
+    [start.toISOString(), end.toISOString()],
+  );
+  return result.rows.map((r) => ({ merchantId: r.merchant_id, capturedFils: Number(r.captured_fils) }));
+}
+
+/**
+ * One correction group per merchant. lineCount is the number of transactions
+ * with a non-zero residue, not the number of scheme lines.
+ */
+function groupByMerchant(rows: ResidueRow[]): MerchantResidue[] {
+  const byMerchant = new Map<string, MerchantResidue>();
+  for (const row of rows) {
+    const residue = computeResidueFils(row.capturedFils);
+    const existing = byMerchant.get(row.merchantId);
+    if (existing) {
+      existing.lineCount += 1;
+      existing.residueFils += residue;
+    } else {
+      byMerchant.set(row.merchantId, { merchantId: row.merchantId, lineCount: 1, residueFils: residue });
+    }
+  }
+  return [...byMerchant.values()];
+}
+
+const SWEEP_DESCRIPTION = "March 2026 scheme rounding residue sweep — manual recon per finance";
+
+// X5: residue legs per ADR-0002; merchants are paid in full, never debited.
+async function postResidueCorrection(client: Client, merchant: MerchantResidue, now: Date): Promise<void> {
+  if (merchant.residueFils <= 0) return;
+  const entryGroupId = randomUUID();
+  await client.query(
+    `INSERT INTO ledger_entries (entry_group_id, merchant_id, account_id, direction, amount_fils, occurred_at, description)
+     VALUES ($1, $2, 'card_scheme_clearing', 'credit', $3, $4, $5),
+            ($1, $2, 'scheme_rounding_residue', 'debit', $3, $4, $5)`,
+    [entryGroupId, merchant.merchantId, merchant.residueFils, now.toISOString(), SWEEP_DESCRIPTION],
+  );
+}
+
+export interface SweepResult {
+  /** True when correction entries were written. */
+  posted: boolean;
+  /** Set when nothing was written and why. */
+  skipped?: "dry_run" | "already_posted";
+  rowsMatched: number;
+  merchants: MerchantResidue[];
+  totalResidueFils: number;
+}
+
+/**
+ * Computes the March 2026 residue and posts one correction group per merchant.
+ * Runs inside the caller's transaction; the caller commits or rolls back.
+ */
+export async function runSweep(client: Client, options: { dryRun: boolean; now?: Date }): Promise<SweepResult> {
+  const now = options.now ?? new Date();
+  const rows = await fetchResidueRows(client, 2026, 3);
+  const merchants = groupByMerchant(rows);
+  const totalResidueFils = merchants.reduce((sum, m) => sum + m.residueFils, 0);
+  const summary = { rowsMatched: rows.length, merchants, totalResidueFils };
+
+  if (options.dryRun) {
+    return { posted: false, skipped: "dry_run", ...summary };
+  }
+  // X2: one sweep only. The lock makes a concurrent run wait for this one to
+  // commit, so its check below then sees these entries.
+  await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [SWEEP_DESCRIPTION]);
+  const existing = await client.query(`SELECT 1 FROM ledger_entries WHERE description = $1 LIMIT 1`, [
+    SWEEP_DESCRIPTION,
+  ]);
+  if (existing.rows.length > 0) {
+    return { posted: false, skipped: "already_posted", ...summary };
+  }
+
+  for (const merchant of merchants) {
+    await postResidueCorrection(client, merchant, now);
+  }
+  return { posted: true, ...summary };
+}
+
+async function main(): Promise<void> {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    throw new Error("reconcile_march: DATABASE_URL environment variable is not set");
+  }
+
+  const client = new Client({ connectionString: databaseUrl });
+  await client.connect();
+  // FH: the log says 'run at ...+03:00' but toISOString is always Z?? MK: different node version
+  const now = new Date();
+
+  const dryRun = process.argv.includes("--dry-run");
+
+  try {
+    const { start, end } = monthBounds(2026, 3);
+    console.log(`=== March 2026 reconciliation sweep${dryRun ? " (DRY RUN, nothing is written)" : ""} ===`);
+    console.log(`run at: ${now.toISOString()}`);
+    console.log(`window: ${start.toISOString().slice(0, 10)} .. ${end.toISOString().slice(0, 10)}`);
+    console.log("");
+
+    await client.query("BEGIN");
+    let result: SweepResult;
+    try {
+      result = await runSweep(client, { dryRun, now });
+      await client.query(result.posted ? "COMMIT" : "ROLLBACK");
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    }
+
+    for (const merchant of result.merchants) {
+      console.log(
+        `merchant ${merchant.merchantId}: ${merchant.lineCount} line(s), residue ${formatBhd(toFils(merchant.residueFils))} BD (${merchant.residueFils} fils)`,
+      );
+    }
+    console.log("---");
+    console.log(`total lines matched: ${result.rowsMatched}`);
+    console.log(`total residue: ${formatBhd(toFils(result.totalResidueFils))} BD (${result.totalResidueFils} fils)`);
+    console.log("");
+    if (result.skipped === "already_posted") {
+      console.log("REFUSED: this sweep is already in the ledger; nothing was posted");
+      process.exitCode = 1;
+    } else if (result.skipped === "dry_run") {
+      console.log("dry run: nothing was posted");
+    } else {
+      console.log("reconciliation applied successfully");
+    }
+  } finally {
+    await client.end();
+  }
+}
+
+const isMainModule = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMainModule) {
+  main().catch((err: unknown) => {
+    console.error(err);
+    process.exitCode = 1;
+  });
+}

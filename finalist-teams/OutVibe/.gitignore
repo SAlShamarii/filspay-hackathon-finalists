@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.local
+.env.docker
+ops/.env.docker
+npm-debug.log*
+.DS_Store
+.claude/

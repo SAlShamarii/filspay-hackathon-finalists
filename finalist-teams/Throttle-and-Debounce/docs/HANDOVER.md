@@ -1,0 +1,96 @@
+# Handover — Yousif Al-Ansari (last day 2026-04-09)
+
+Written over my last three days. Some of this is plans rather than facts;
+Mahmood has the context for most of it.
+
+— YA
+
+*(Moved here from the wiki by MK in May. Not re-reviewed since.)*
+
+> **Status note (2026-10-30):** the text below is left as written, and it describes
+> April 2026. Later accepted ADRs decide or replace these points:
+> scheme residue (0002, 0007), the March window and balance rebuilds (0007),
+> impersonation (0008), refund opt-in and release (0009, 0015), the unknown-capture
+> block (0013, 0016), callback signatures (0012, 0019) and the volume tier (0014,
+> 0019). Signed webhook bytes, the second-approver check, holds expiry and the
+> daemon's Bahrain date now match the handover's intent in code. Callback dedupe
+> exists, but through a unique index on `acquirer_callback_notes`, not
+> `processed_events`.
+>
+> **Still unresolved between the sources:** this handover says a credit's effective
+> date is metadata and ledger rows use `now()`. ARCHITECTURE says corrections post
+> with the effective date of the period, which is what the code does. This needs an
+> explicit decision.
+
+## State of things
+
+**Refunds.** `POST /v1/refunds` returns 501. `processRefund.ts` is the
+helper and I'd consider it done: it needs the route and the drawer wired.
+Fee reversal goes through `calculateRefundFee`, which sums back to the
+original fee across partials.
+
+**Scheme residue.** I added `0038_scheme_export_lines_amount_3dp.sql` so
+each export line keeps the untruncated three-decimal amount next to the
+two-decimal one, and the residue posting reads the difference. Next step was
+posting residue to `scheme_rounding_residue` inside CloseBatch. I didn't get
+to it — nothing posts residue yet except what finance runs by hand.
+
+> **MK (May):** 0038 was replaced by the KYC thumbnail migration; `amount_3dp` is gone. 0050 covers the scheme amount now.
+
+**Verify residue with Visa.** Open with the acquirer's integration contact
+since December: does the scheme truncate or round at their end, and would
+they accept three decimals in `amount_minor`? Their answer so far was "it
+depends on the BIN range". I asked which ranges. Please chase.
+
+**March close (FP-187).** Finance asked for a one-off check script. I think
+March is fine and the script is belt-and-braces. Whoever writes it must use
+the Bahrain month, not a UTC month — I told Mahmood.
+
+**Balances.** The only way to rebuild `merchant_balances` is the CLI
+(`settlement rebuild-balances`), which reads the ledger. There is no console
+button, and there shouldn't be one that reads anything else.
+
+**Platform volume tier.** Huda floated a platform-wide discount once total
+volume passes a threshold. I said no until finance signs off in writing.
+`platform_stats.total_processed_fils` is INTEGER, which is fine while it's
+only a counter.
+
+**`apps/api/src/v1/`** is the partner API. Leave it alone; a partner
+integrates against it.
+
+**Webhook signing.** The dispatcher should sign exactly the bytes it sends.
+Branch `ya/sign-raw` has a change for this; not merged.
+
+**Holds.** `scripts/expire_holds.ts` flips `active` to `expired` with one
+UPDATE. Holds are never deleted.
+
+**Timezone.** Settlement business day is Asia/Bahrain, fixed constant, no
+DST. `BusinessDayWindow` in window.go is correct and tested. The daemon's
+"yesterday" is computed from the UTC date; harmless because of when it
+runs, but the comment there says Bahrain.
+
+**Impersonation** maps every admin to the `support` merchant role and is
+read-only.
+
+**Credits.** The second approver is compared by admin user id. The
+effective date is metadata; ledger rows go in at now().
+
+**Callbacks.** Acquirer callbacks are recorded in `processed_events` before
+they're applied, so redeliveries are dropped. (The README describes this.)
+
+**Not finished:** per-service DB roles and TLS (compose uses one role and
+`sslmode=disable`); outbox consumption by commit order instead of id (the
+xid8 query is in a gist); the shadow ledger (Mahmood's idea — I'd skip it).
+
+**Migration gaps** (0039, 0041, 0054–56) are PRs I abandoned. No database
+ever ran them, except possibly staging-2, which once ran a branch.
+
+> **MK:** 0054 ran on staging-2 and created `chargeback_cases`, I'm fairly sure. staging-2 has since been reseeded so we can't check
+
+## People
+
+- Huda knows the numbers. Trust what she sends in writing over what anyone
+  remembers her saying.
+- The acquirer integration contact has changed; ask Mahmood.
+
+Good luck. Yalla.

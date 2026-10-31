@@ -1,0 +1,266 @@
+/* No design system, no UI kit — the same "real but small" minimalism
+   apps/web's checkout page ships with. Just enough for dense operational
+   tables to be readable and for the impersonation banner to be impossible
+   to overlook. */
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 15px;
+  color: #1a1a1a;
+  background: #fafafa;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+}
+
+.admin-shell {
+  min-height: 100vh;
+}
+
+.admin-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 0.75rem 1.5rem;
+  background: #fff;
+  border-bottom: 1px solid #ddd;
+}
+
+.admin-brand {
+  font-weight: 700;
+}
+
+.admin-nav {
+  display: flex;
+  gap: 1rem;
+}
+
+.admin-nav a {
+  color: #1a1a1a;
+  text-decoration: none;
+}
+
+.admin-nav a.active {
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.admin-identity {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.admin-role-chip {
+  padding: 0.1rem 0.4rem;
+  border: 1px solid #999;
+  border-radius: 3px;
+  font-size: 0.8em;
+}
+
+.admin-main {
+  max-width: 70rem;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+.admin-centered {
+  max-width: 26rem;
+  margin: 4rem auto;
+  padding: 1.5rem;
+}
+
+.admin-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin: 1rem 0;
+  max-width: 40rem;
+}
+
+.admin-form-inline {
+  flex-direction: row;
+  align-items: flex-end;
+}
+
+.admin-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.admin-form input,
+.admin-form select,
+.admin-form textarea {
+  padding: 0.4rem;
+  font: inherit;
+  border: 1px solid #bbb;
+  border-radius: 3px;
+}
+
+/* MK: global button style, temporary until the design system (Nov 2025) */
+button {
+  padding: 0.4rem 0.8rem;
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid #888;
+  border-radius: 3px;
+  background: #fff;
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.admin-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  border: 1px solid #ddd;
+  padding: 0.5rem 0.75rem;
+  margin: 1rem 0;
+}
+
+.admin-filters label {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  background: #fff;
+}
+
+.admin-table th,
+.admin-table td {
+  border: 1px solid #e0e0e0;
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.admin-dl {
+  display: grid;
+  grid-template-columns: 12rem 1fr;
+  gap: 0.25rem 1rem;
+  margin: 1rem 0;
+}
+
+.admin-dl dt {
+  font-weight: 600;
+}
+
+.admin-dl dd {
+  margin: 0;
+}
+
+.admin-muted {
+  color: #666;
+}
+
+.admin-error {
+  padding: 0.6rem 0.8rem;
+  border: 1px solid #b00020;
+  background: #fdeaea;
+  color: #7a0016;
+}
+
+.admin-notice {
+  padding: 0.6rem 0.8rem;
+  border: 1px solid #2a6f2a;
+  background: #eef7ee;
+  margin: 1rem 0;
+}
+
+.admin-confirm {
+  padding: 0.8rem;
+  border: 2px solid #b06000;
+  background: #fff6e8;
+  margin: 1rem 0;
+  max-width: 40rem;
+}
+
+.admin-id-list {
+  max-height: 14rem;
+  overflow-y: auto;
+}
+
+/* Deliberately loud: an active impersonation grant must never be something
+   an operator can fail to notice. */
+.impersonation-banner {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1.5rem;
+  background: #7a0016;
+  color: #fff;
+  border-bottom: 4px solid #ffcc00;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.impersonation-banner code {
+  color: #ffe;
+}
+
+.impersonation-banner button {
+  margin-left: auto;
+  background: #fff;
+  color: #7a0016;
+  font-weight: 700;
+  border-color: #fff;
+  white-space: nowrap;
+}
+
+.impersonation-banner-error {
+  margin-top: 0.4rem;
+  font-weight: 700;
+}
+
+/* ---------------------------------------------------------------------------
+   Design pass (2026-10-30): the dashboard's neutral scale and single accent,
+   so both consoles read as one product. Overrides only. */
+:root {
+  --ink: #111827; --ink-2: #4b5563; --ink-3: #6b7280; --line: #e5e7eb; --line-2: #d1d5db;
+  --surface: #ffffff; --canvas: #f6f7f9; --accent: #1d4ed8; --bad: #b91c1c; --bad-bg: #fef2f2;
+}
+body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 14px; line-height: 1.5; color: var(--ink); background: var(--canvas); -webkit-font-smoothing: antialiased; }
+.admin-header { min-height: 56px; padding: 0 24px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.admin-brand { font-weight: 600; letter-spacing: -0.01em; }
+.admin-nav { gap: 4px; }
+.admin-nav a { color: var(--ink-2); padding: 6px 10px; border-radius: 6px; font-weight: 500; text-decoration: none; }
+.admin-nav a:hover { color: var(--ink); background: var(--canvas); }
+.admin-nav a.active { color: var(--ink); background: #eef2f7; font-weight: 600; text-decoration: none; }
+.admin-role-chip { border: 1px solid var(--line-2); border-radius: 999px; padding: 1px 8px; color: var(--ink-2); }
+.admin-main { max-width: 1200px; padding: 32px 24px 64px; }
+.admin-main h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
+.admin-main h2 { font-size: 15px; font-weight: 600; }
+.admin-centered { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 32px; }
+.admin-form label, .admin-filters label { font-size: 13px; font-weight: 500; color: var(--ink-2); }
+.admin-form input, .admin-form select, .admin-form textarea, .admin-filters input, .admin-filters select {
+  font: inherit; padding: 8px 10px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--surface); color: var(--ink);
+}
+.admin-form input:focus, .admin-form select:focus, .admin-form textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.15); }
+button { padding: 7px 14px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--surface); color: var(--ink); font: inherit; font-weight: 500; cursor: pointer; }
+button:hover:not(:disabled) { background: var(--canvas); border-color: #9ca3af; }
+.admin-form button[type="submit"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.admin-form button[type="submit"]:hover:not(:disabled) { background: #1e40af; }
+.admin-muted { color: var(--ink-3); }
+.admin-table { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; border-collapse: separate; border-spacing: 0; overflow: hidden; font-variant-numeric: tabular-nums; }
+.admin-table th { background: #f9fafb; color: var(--ink-3); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid var(--line); }
+.admin-table th, .admin-table td { padding: 10px 14px; border-left: 0; border-right: 0; border-top: 0; }
+.admin-table td { border-bottom: 1px solid var(--line); }
+.admin-table tr:last-child td { border-bottom: 0; }
+.admin-dl { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 20px; font-variant-numeric: tabular-nums; }
+.admin-dl dt { color: var(--ink-3); font-weight: 500; }
+.admin-error { color: var(--bad); background: var(--bad-bg); border: 1px solid #fecaca; border-radius: 6px; padding: 8px 12px; }

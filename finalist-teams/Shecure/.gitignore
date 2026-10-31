@@ -1,0 +1,14 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.local
+npm-debug.log*
+.DS_Store
+.claude/*
+!.claude/settings.json
+.claude/settings.local.json
+.env.*
+ops/.env.docker
+!*.example
+ops/certs/

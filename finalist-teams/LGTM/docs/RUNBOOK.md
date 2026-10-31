@@ -1,0 +1,220 @@
+# Runbook
+
+Short on purpose. If something here is wrong or missing, fix it after the
+incident, not during.
+
+## Health
+
+- `GET /healthz` — the process answers. That's all it tells you.
+- `GET /readyz` — the API reached Postgres when it booted. It does not
+  re-check afterwards; a green `/readyz` says nothing about the database
+  right now. To check the database, run a query.
+
+> **FH:** the FP-215 PR description says readyz re-checks every 30s now. not sure it merged
+>
+> **— unsigned:** it pings on every request since FP-215. this section is stale
+
+## The API container keeps restarting / requests die with no error
+
+No stack trace in the app logs usually means the kernel killed it, not
+Node. The API container is capped at 512 MB.
+
+```bash
+dmesg -T | grep -i -E "killed process|out of memory"
+docker inspect <container> --format '{{.State.OOMKilled}}'
+```
+
+If it's OOM, find the request that was in flight when it died (the access
+log line that never got a response) before raising the limit.
+
+The most common cause so far has been sharp's in-process image cache when
+support pages through KYC thumbnails. Set `SHARP_CACHE=0` on the API
+container and restart.
+
+## Settlement didn't run for a day
+
+The daemon only catches up the most recent business day on restart. For
+anything older:
+
+```bash
+settlement run-batch --date=YYYY-MM-DD            # every merchant
+settlement run-batch --date=YYYY-MM-DD --merchant=<uuid>
+```
+
+`--date` is the Bahrain business date. Safe to repeat: a batch that's
+already closed or paid is left alone.
+
+> **— unsigned:** re-running a date from before a merchant went live can settle their test captures. check go-live dates first
+
+## Payment-link capture is stuck processing
+
+An uncertain capture is held for review to prevent a second charge. Find the
+marked link and its transaction using a read-only query:
+
+```sql
+SELECT pl.id, pl.merchant_id, pl.reserved_at, pl.capture_transaction_id,
+       t.status, t.captured_fils, t.acquirer_reference
+  FROM payment_links pl
+  JOIN transactions t ON t.id = pl.capture_transaction_id
+ WHERE pl.capture_transaction_id IS NOT NULL;
+```
+
+First let the system ask the acquirer (R8): call the route below with only a
+`reason`. If it answers `acquirer_outcome_unknown` (the acquirer has no record,
+e.g. after a restart), confirm the outcome in the acquirer's own portal and
+reconcile it with the ledger with Finance. Never retry the charge. Then, as a
+finance or super_admin user, report what you found (R7):
+
+```
+POST /v1/admin/payment-links/<link id>/recover-capture
+{ "attestedOutcome": "captured" | "not_captured", "reason": "<ticket and what you saw>" }
+```
+
+- `captured`: the link becomes paid. Refused with `ledger_not_reconciled` if
+  the transaction is not captured here for the full amount; Finance corrects
+  the books first (a ledger correction, not done through this route), then
+  repeat the call.
+- `not_captured`: the link is released for a new attempt and the dangling
+  authorization is voided. Refused with `local_books_show_capture` if a
+  capture is recorded here; reconcile that first.
+
+Each call is audited and repeating the same report does nothing more.
+`GET /v1/admin/payment-links/stuck` lists every link held for more than 15
+minutes. A link reserved before migration 0081 shows `hasMarker: false`: find
+its transaction and add `"transactionId"` to the recovery call (R9). It must be
+the same merchant and amount and created within 10 minutes after the link was
+reserved; check its acquirer reference before naming it, since a wrong
+transaction would be voided or used to mark the link paid. A link
+reserved less than 15 minutes ago is refused (`recently_reserved`): its payment
+may still be running.
+
+When deploying migration 0081, pause new payment-link traffic, drain all old
+API workers and reconcile their in-flight or stale reservations before
+enabling the new workers. Old workers do not honor the new marker, and
+reservations created before the migration have no marker.
+
+## A merchant's lifetime payout figure looks wrong
+
+`merchants.lifetime_net_payout_monitoring_estimate` is a running monitoring
+total, not a payout figure; some historical values carry drift (M19). To
+compare it with the payouts actually in the ledger (read-only, changes
+nothing):
+
+```bash
+settlement payout-estimate-report
+```
+
+Agree any correction with Finance before changing a stored value. On seeded
+demo data every merchant with paid batches will show drift, because the seed
+sets the estimate but writes no payout legs.
+
+## A refund is stuck pending
+
+A refund is written as `pending` before the acquirer is called and becomes
+`succeeded` or `failed` when it answers (F22). A `pending` row older than a few
+minutes means the process stopped in between. Find them (read-only):
+
+```sql
+SELECT r.id, r.transaction_id, r.merchant_id, r.amount_fils, r.created_at,
+       t.refunded_fils, t.pending_refund_fils
+  FROM refunds r JOIN transactions t ON t.id = r.transaction_id
+ WHERE r.status = 'pending' AND r.created_at < now() - interval '10 minutes';
+```
+
+Its amount is still reserved, so it can't be refunded twice. Confirm the
+outcome at the acquirer with Finance before any correction: an approved refund
+needs its ledger legs, a refused one needs the reservation released.
+
+## A merchant's balance looks wrong
+
+`merchant_balances` is a cache. Recompute it:
+
+```bash
+settlement rebuild-balances                       # prints before/after per merchant
+settlement rebuild-balances --merchant=<uuid>
+```
+
+If you don't have shell access, the console's **Rebuild cached balances**
+does the same for all merchants. If the rebuilt figure is still wrong, use
+**Adjust balance** for the remaining difference and note the ticket in the
+reason.
+
+## Dashboards look stale
+
+Analytics lag the write model by up to a poll interval; every response
+carries `readModelAsOf`. If it's stuck:
+
+```bash
+npx tsx apps/reporting/src/index.ts catch-up
+```
+
+`catch-up` shares the worker's cursor, so it's safe to run while the worker
+is up. Then check the reporting worker is running and connected.
+
+If `readModelAsOf` is `null` after a fresh seed, restart the worker; it
+usually needs a couple of restarts while Postgres warms up.
+
+> **MK:** stop the worker before catch-up. two consumers on one cursor double-apply.
+
+## Webhooks aren't arriving
+
+1. Look at the endpoint's delivery log (dashboard, or
+   `GET .../webhook-endpoints/:id/deliveries`). `failed` means we got a non-2xx
+   and will retry; `exhausted` means retries are done.
+2. Check the merchant's endpoint URL and that their receiver returns 2xx
+   within the timeout.
+3. If **no** merchant is receiving anything, restart the API — the
+   dispatcher's `LISTEN` connection occasionally drops (FP-236).
+4. Replay from the dashboard, or in bulk from the admin console.
+
+> **FH:** last stall had a TypeError from buildEnvelope in the logs and came back after restart on the same event
+>
+> **— M?** bad deploy, rolled back
+
+If a merchant reports that signatures don't verify, ask them to parse the
+body and re-serialise it with sorted keys before computing the HMAC; some
+HTTP frameworks reorder JSON keys.
+
+> **MK:** if signatures don't verify over the raw body, that's on us. FP-240
+
+## Scheme file for a batch
+
+```bash
+settlement export-scheme-file --batch=<uuid> --out=/tmp/batch.csv
+```
+
+Re-exporting gives an identical file; it's written from rows frozen at
+close. The `amount` column is in the scheme's two-decimal format and is
+what the scheme was paid; finance reconciles against it.
+
+## Month-end residue (finance)
+
+Until residue posting is automated (see ARCHITECTURE, "The scheme
+boundary"), finance runs a month-end script modelled on
+`scripts/reconcile_march.ts`:
+
+1. Copy the script, change the window constants at the top to the new
+   month (UTC calendar month, `YYYY-MM-01T00:00Z` to the first of the next
+   month), and change `SWEEP_DESCRIPTION` to name the new month (the
+   already-posted check matches it).
+2. Run it with `--dry-run` first and check the figures with finance.
+3. Run it once against production with finance on the call.
+4. Attach the log from `scripts/out/` to the month-end ticket.
+
+The script checks for an existing posting with the same description, so a
+second run is a no-op.
+
+> **Huda** (#fp-finance): please don't run anything for April onwards until March (FP-187) is resolved
+
+## Resetting a non-production environment
+
+```bash
+npm run migrate && npm run seed
+```
+
+The seed truncates and regenerates the fixture tables it owns and
+self-checks the result. It prints `REAL FAIL` lines if anything doesn't
+come out as expected — don't ignore them. It won't touch other tables, so
+it's safe against a shared staging database.
+
+> **AM (Sept):** check DATABASE_URL before seeding. staging-2 got reset this way

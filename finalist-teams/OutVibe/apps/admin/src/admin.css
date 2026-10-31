@@ -1,0 +1,76 @@
+/* The admin console wears the one shared design system, @filspay/ui, so it
+   reads as the same product as the merchant dashboard. Everything the two
+   planes share (tokens, shell, nav, tables, status badges, tags, charts,
+   forms, buttons, motion) comes from the import below. Only the handful of
+   things the admin plane alone needs live here: the staff marker on the
+   wordmark, the paused-screens notice, and the persistent
+   impersonation banner. */
+@import "../../../packages/ui/src/theme.css";
+@import "../../../packages/ui/src/coin-login.css";
+
+.admin-frame { min-height: 100dvh; }
+.admin-eyebrow { color: var(--fp-brand-ink); font: 500 12px/1.55 var(--fp-mono); letter-spacing: .16em; text-transform: uppercase; }
+
+/* The operator-tools launchpad: a row of equal links to the tools that have
+   no queue of their own, wrapping on narrow viewports. */
+.admin-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--fp-3);
+}
+
+/* A screen that stands in for the whole console (session check, crash): the
+   shared error banner and its one action, flush left like every error face. */
+.admin-centered {
+  display: grid;
+  justify-items: start;
+  gap: var(--fp-3);
+  max-width: 44rem;
+  padding: 48px 24px;
+}
+
+.admin-centered > .dash-error {
+  margin: 0;
+}
+
+/* The view-as-merchant pause: a flush-left designed face, not a bare error. */
+.admin-paused {
+  max-width: 44rem;
+}
+
+.admin-paused h1 {
+  margin-top: 0;
+}
+
+/* A scrollable list of ids inside a confirm step (bulk actions). */
+.admin-id-list {
+  max-height: 14rem;
+  overflow-y: auto;
+  margin: var(--fp-2) 0 0;
+  padding-left: var(--fp-5);
+}
+
+/* The active grant stays visible above workspace content. */
+.impersonation-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 24px;
+  margin: -24px -24px 24px;
+  background: var(--fp-warn-wash);
+  color: var(--fp-warn);
+  position: relative;
+  z-index: 10;
+  font-size: 13px;
+}
+.impersonation-banner-mark { display: inline-flex; padding-top: 2px; }
+.impersonation-banner-mark svg { width: 20px; height: 20px; }
+.impersonation-banner-body { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.impersonation-banner-body strong { display: block; font: 400 20px/1.25 var(--fp-display); text-transform: uppercase; letter-spacing: .01em; margin-bottom: 4px; }
+.impersonation-banner code { color: inherit; }
+.impersonation-banner .dash-button { flex-shrink: 0; }
+.impersonation-banner-error { margin-top: 12px; font-weight: 600; }
+@media (max-width: 1023px) {
+  .impersonation-banner { flex-wrap: wrap; margin: -16px -16px 24px; padding: 16px; }
+  .impersonation-banner .dash-button { margin-left: 32px; }
+}

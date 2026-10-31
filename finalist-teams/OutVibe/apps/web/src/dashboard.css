@@ -1,0 +1,8 @@
+/* The merchant dashboard's look now lives in the shared design system,
+   @filspay/ui, so the admin console draws from the exact same tokens,
+   primitives, tables, status badges, charts and motion. This file stays as
+   the dashboard's stylesheet entry point (every page still imports it) and
+   re-exports that one source. App-specific rules, if any are ever needed,
+   go below the import. */
+@import "../../../packages/ui/src/theme.css";
+@import "../../../packages/ui/src/coin-login.css";

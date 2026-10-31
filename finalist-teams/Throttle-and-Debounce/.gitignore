@@ -1,0 +1,21 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.local
+npm-debug.log*
+.DS_Store
+.claude/
+bugs.md
+reports/
+.codex/
+tmp-go-build/
+.tmp/
+kyc-backup*/
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/

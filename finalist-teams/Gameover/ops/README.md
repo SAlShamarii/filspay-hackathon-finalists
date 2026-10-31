@@ -1,0 +1,111 @@
+# ops/
+
+FilsPay's stack: Postgres, apps/api, apps/settlement (Go daemon) and
+apps/reporting (outbox worker), plus one-off `migrate` and `seed` jobs.
+
+## Files
+
+| File | Purpose |
+|---|---|
+| `docker-compose.yml` | The stack, production-shaped. **The server runs this file alone.** |
+| `docker-compose.override.yml` | Laptop-only additions (dev mode, local ports). Loaded automatically by `docker compose up` inside `ops/`. |
+| `init-env.sh` | Writes `ops/.env` with fresh random secrets, once. |
+| `.env.example` | The variables `ops/.env` must define. |
+| `Dockerfile.node` | Image for api, reporting, migrate and seed (Node 22, runs TypeScript with tsx; api and reporting run as the `node` user). |
+| `backup.sh` | The backup service: a nightly `pg_dump`, 7 kept. |
+| `Dockerfile.go` | Multi-stage build of apps/settlement into a distroless image. |
+
+Secrets live only in `ops/.env`, which is in `.gitignore` and `.dockerignore`.
+Compose refuses to start if one is missing. (The old `ops/.env.docker` was
+committed with the callback signing secret and never loaded by compose; it
+is gone and that secret must be treated as leaked.)
+
+## Server (production)
+
+Public URLs: `https://<PUBLIC_HOST>` (checkout + merchant dashboard) and
+`https://admin.<PUBLIC_HOST>` (admin console). The `proxy` service (Caddy,
+`Dockerfile.proxy` + `Caddyfile`) gets Let's Encrypt certificates, serves
+the built dashboards and forwards `/v1` to the API, so each site is a
+single origin. Only ports 22, 80 and 443 are open.
+
+First time, on the server:
+
+```bash
+bash server-setup.sh          # Docker, swap file, firewall (copy it over first)
+```
+
+From your machine (ships the committed HEAD, keeps the server's `ops/.env`):
+
+```bash
+DEPLOY_HOST=165.232.180.63 DEPLOY_USER=<user> ops/deploy.sh
+```
+
+Once, on the server, before the first deploy finishes (or after it fails asking for it):
+
+```bash
+cd ~/filspay && PUBLIC_HOST=165-232-180-63.sslip.io OTP_DEV_EXPOSE=true ops/init-env.sh   # back up ops/.env
+docker compose -p filspay -f ops/docker-compose.yml --profile seed run --rm seed          # optional demo data
+```
+
+**OTP on the hosted demo.** The platform has no email or SMS sender: the OTP
+notifier only writes a log line, and in production it leaves the code out.
+Without a delivery channel nobody could log into the dashboard or admin
+console. The demo box therefore sets `OTP_DEV_EXPOSE=true`, which returns the
+code in the login response (the login pages show it as "Development code").
+This is a deliberate sandbox trade-off: it reduces login to the password
+alone, so it must stay `false` (the default) anywhere real merchants log in,
+until a real sender exists.
+
+Because the password is then the only factor, the seeded demo accounts must
+not use the defaults in `db/seed/generate.ts`: this repo is public.
+`init-env.sh` generates `SEED_USER_PASSWORD` and `SEED_ADMIN_PASSWORD` into
+`ops/.env`, and the seed uses them. For a box seeded before they existed:
+
+```bash
+docker compose -p filspay -f ops/docker-compose.yml --profile seed run --rm seed npm run seed:reset-passwords
+```
+
+## Laptop
+
+```bash
+POSTGRES_PASSWORD=filspay_dev_password ops/init-env.sh   # once (keeps an existing local volume's password)
+cd ops && docker compose up -d                           # base + override: dev mode
+docker compose --profile seed run --rm seed              # demo data
+```
+
+The dashboards run with Vite (`npm run dev -w apps/web`, `-w apps/admin`) and
+proxy `/v1` to the API on `localhost:3000`.
+
+## What the base file guarantees
+
+| Property | How |
+|---|---|
+| Fits the box: 1 vCPU / 2 GB, API ≤ 0.5 vCPU / 512 MB | CPU ceilings on the one shared vCPU: api 0.5, postgres 0.5, proxy 0.4, settlement 0.1, reporting 0.1, backup 0.1. They are caps, not reservations, so they sum past 1; Postgres got 0.5 after the load test showed it pinned at 0.3 while the box was half idle, and the proxy 0.4 after TLS handshakes pinned it at 0.15 from 100 checkouts/s. Memory: 512 / 640 / 96 / 128 / 256 / 64 MB. Node heaps capped below their container limits. |
+| Restarts itself | `restart: unless-stopped` on every long-running service. Measured: a hard-killed API process is back and healthy in ~7 s. |
+| Health | API healthcheck on `/readyz`; Postgres on `pg_isready`. Services start only after Postgres is healthy and migrations succeeded. |
+| Not exposed | Postgres is not published. The API binds to `127.0.0.1` until the TLS proxy fronts it. Settlement's internal API (:8091) is reachable only on the compose network. |
+| No data loss on recreate | Named volumes for Postgres data **and KYC uploads** (`/data/kyc`; these used to live inside the API container and vanished on every rebuild). |
+| Production mode | `NODE_ENV=production`: the API refuses to start without it (bug 68), cookies are `Secure`, webhook URLs must be public https. |
+| Disk | Container logs rotate at 10 MB × 3. |
+| Least privilege | api and reporting run as the `node` user, not root, started by `node` directly (no npm wrapper) under an init process. |
+| Backups | `backup` service: `pg_dump` at 23:30 UTC into the `filspay_backups` volume, 7 days kept (same disk: protects against mistakes, not losing the box). |
+
+## Database
+
+Every service connects as the `filspay` role over the compose network
+(`sslmode=disable` is acceptable there: the traffic never leaves the host).
+Per-service roles are still a TODO.
+
+Backups and restore:
+
+```bash
+docker compose -p filspay -f ops/docker-compose.yml exec backup sh /ops/backup.sh now   # take one now
+docker compose -p filspay -f ops/docker-compose.yml exec backup ls -lh /backups
+# restore one (stop writers first):
+docker compose -p filspay -f ops/docker-compose.yml stop api settlement reporting
+docker compose -p filspay -f ops/docker-compose.yml exec backup pg_restore --clean --if-exists -d filspay /backups/<file>.dump
+docker compose -p filspay -f ops/docker-compose.yml start api settlement reporting
+```
+
+A KYC volume created before the services ran as `node` is owned by root;
+once: `docker compose -p filspay -f ops/docker-compose.yml run --rm --no-deps --user root api chown -R node:node /data/kyc`.

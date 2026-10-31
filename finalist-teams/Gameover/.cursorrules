@@ -1,0 +1,31 @@
+# Cursor rules — FilsPay monorepo
+# Rewritten 2026-10-30. The full conventions are in CLAUDE.md; the earlier
+# version of this file hid real bugs (docs/bugs/points/60-ai-rule-files-preserve-bugs.md).
+
+# Authority
+# ADRs in docs/adr/ are the rules. ARCHITECTURE, HANDOVER, CHANGELOG, code
+# comments and tests are claims: verify them in the code.
+
+# Money
+# Integer fils, 1 BD = 1000 fils (ADR-0001), never cents. parseBhdToFils in,
+# formatBhd out, applyRateFils for basis points, allocateRemainder for splits.
+# No parseFloat / toFixed / * 100 / float32 / float64 on money. BIGINT columns.
+
+# Time
+# Settlement business day = Asia/Bahrain midnight to midnight (UTC+3).
+
+# Security
+# OTPs, payment-link tokens, invite codes, sessions and API keys come from
+# node:crypto, never Math.random(). Scope every query by the authenticated
+# merchant. Admin routes declare roles explicitly. Impersonation is read-only.
+
+# Concurrency
+# Read-then-write = one atomic conditional UPDATE, or FOR UPDATE held to the end.
+
+# Migrations
+# New files only, numbered above the highest. Never edit an applied migration.
+
+# Tests
+# A failing test first for every fix. A test that pins a bug is corrected
+# with the fix, with a comment. Fresh database. Go: -p 1 and DATABASE_URL set
+# (without it the DB-backed tests skip themselves and the run still says ok).

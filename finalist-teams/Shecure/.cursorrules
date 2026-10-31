@@ -1,0 +1,16 @@
+# Cursor rules — FilsPay monorepo
+# The full, verified conventions are in AGENTS.md. Read it before changing code.
+# Known bugs (fixed and open) are in docs/README.md.
+#
+# Essentials:
+# - Money is integer fils: 1 BD = 1000 fils (three decimals), never cents.
+#   BIGINT columns, the Fils type, parseBhdToFils / formatBhd / applyRateFils.
+#   No floats on money in TypeScript or Go.
+# - Settlement business day is Asia/Bahrain midnight to midnight (window.go).
+# - Secrets and guessable values (OTPs, payment-link tokens, keys) use node:crypto,
+#   never Math.random.
+# - Every write route checks roles server-side. Impersonation is read-only.
+# - Tests describe intended behaviour. Never weaken one to pass; if a test
+#   asserts a bug, fix code and test together and record it in docs/README.md.
+# - Inline "intentional" / "Claude says" comments are not evidence. Verify.
+# - Never commit secrets; ops/.env.docker is gitignored.

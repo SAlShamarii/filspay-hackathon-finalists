@@ -1,0 +1,239 @@
+# FilsPay stack, production-shaped. This file alone is what the server runs:
+#
+#   ops/init-env.sh                                   # once: writes ops/.env (secrets, not in git)
+#   docker compose -f ops/docker-compose.yml up -d --build
+#
+# On a laptop, `docker compose up` inside ops/ also loads
+# docker-compose.override.yml (dev mode, local ports). See ops/README.md.
+#
+# Sized for the target box: the whole stack on 1 vCPU / 2 GB RAM, with the
+# API limited to 0.5 vCPU / 512 MB. CPU limits are per-service ceilings on
+# the one shared vCPU, not reservations, so they sum to more than 1: the
+# load test showed Postgres pinned at a 0.3 ceiling while the box was about
+# half idle (docs/perf/2026-10-30-checkout-capacity.md).
+#
+# Secrets come only from ops/.env (compose reads it automatically because
+# it sits next to this file); a missing one stops `up` with a message.
+
+x-database-url: &database-url "postgres://filspay:${POSTGRES_PASSWORD:?run ops/init-env.sh to create ops/.env}@postgres:5432/filspay?sslmode=disable"
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: filspay
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run ops/init-env.sh to create ops/.env}
+      POSTGRES_DB: filspay
+    # Not published: only the services on this network reach it.
+    command: ["postgres", "-c", "shared_buffers=128MB", "-c", "max_connections=60"]
+    volumes:
+      - filspay_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U filspay -d filspay"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 640M }
+    logging: *logging
+
+  # One-off: applies db/migrations/*.sql (tracked by filename), then exits.
+  migrate:
+    build:
+      context: ..
+      dockerfile: ops/Dockerfile.node
+    command: ["npm", "run", "migrate"]
+    environment:
+      DATABASE_URL: *database-url
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 384M }
+    logging: *logging
+
+  # One-off, opt-in (it truncates its fixture tables):
+  #   docker compose -f ops/docker-compose.yml --profile seed run --rm seed
+  seed:
+    profiles: ["seed"]
+    build:
+      context: ..
+      dockerfile: ops/Dockerfile.node
+    command: ["npm", "run", "seed"]
+    environment:
+      DATABASE_URL: *database-url
+      # Fixture account passwords for this deployment (ops/init-env.sh); unset,
+      # the public constants in db/seed/generate.ts are used.
+      SEED_USER_PASSWORD: ${SEED_USER_PASSWORD:-}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+      WEBHOOK_SECRET_ENCRYPTION_KEY: ${WEBHOOK_SECRET_ENCRYPTION_KEY:?run ops/init-env.sh}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *logging
+
+  api:
+    build:
+      context: ..
+      dockerfile: ops/Dockerfile.node
+    # node itself, not npx: no npm/tsx wrapper processes (~140 MB), and
+    # signals reach the server directly. init reaps children (esbuild).
+    command: ["node", "--import", "tsx", "apps/api/src/index.ts"]
+    init: true
+    user: node
+    restart: unless-stopped
+    # Loopback only until the TLS reverse proxy fronts it.
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      # Required: the API refuses to start without an explicit NODE_ENV (bug 68).
+      NODE_ENV: production
+      # Keep the V8 heap well inside the 512 MB container limit.
+      NODE_OPTIONS: --max-old-space-size=384
+      DATABASE_URL: *database-url
+      # Checkouts hold a connection through each acquirer call (mostly waiting),
+      # so the pool, not CPU, sets throughput; load shedding (503) kicks in
+      # once this many requests are already queued for a connection.
+      PG_POOL_MAX: ${API_PG_POOL_MAX:-20}
+      SETTLEMENT_INTERNAL_URL: http://settlement:8091
+      # Payment-link URLs the API hands out point at the public checkout.
+      CHECKOUT_BASE_URL: https://${PUBLIC_HOST:-localhost:5173}
+      SETTLEMENT_INTERNAL_TOKEN: ${SETTLEMENT_INTERNAL_TOKEN:?run ops/init-env.sh}
+      WEBHOOK_SECRET_ENCRYPTION_KEY: ${WEBHOOK_SECRET_ENCRYPTION_KEY:?run ops/init-env.sh}
+      ACQUIRER_CALLBACK_SIGNING_SECRET: ${ACQUIRER_CALLBACK_SIGNING_SECRET:?run ops/init-env.sh}
+      # Demo sandbox only: there is no email/SMS sender, so the hosted demo
+      # returns the OTP in the login response when ops/.env says so. Off unless set.
+      OTP_DEV_EXPOSE: ${OTP_DEV_EXPOSE:-false}
+      # KYC documents live on a volume, not in the container (a rebuild
+      # used to delete every merchant's uploaded documents).
+      KYC_UPLOAD_DIR: /data/kyc
+    volumes:
+      - filspay_kyc:/data/kyc
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/readyz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 512M }
+    logging: *logging
+
+  settlement:
+    build:
+      context: ..
+      dockerfile: ops/Dockerfile.go
+    command: ["./settlement", "daemon"]
+    restart: unless-stopped
+    # Docker's default is 10 s from SIGTERM to SIGKILL. On SIGTERM the daemon
+    # cancels its work (the open batch transaction rolls back) and gives its
+    # internal API up to 30 s to drain (shutdownTimeout in
+    # internal/internalapi/server.go); never cut that short with a SIGKILL.
+    stop_grace_period: 60s
+    environment:
+      DATABASE_URL: *database-url
+      # Required at boot. Its internal API (:8091) is reachable only on this network.
+      SETTLEMENT_INTERNAL_TOKEN: ${SETTLEMENT_INTERNAL_TOKEN:?run ops/init-env.sh}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits: { cpus: "0.1", memory: 128M }
+    logging: *logging
+
+  reporting:
+    build:
+      context: ..
+      dockerfile: ops/Dockerfile.node
+    # No subcommand = the long-running worker.
+    command: ["node", "--import", "tsx", "apps/reporting/src/index.ts"]
+    init: true
+    user: node
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: --max-old-space-size=192
+      DATABASE_URL: *database-url
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits: { cpus: "0.1", memory: 256M }
+    logging: *logging
+
+  # Nightly pg_dump at 23:30 UTC (02:30 Bahrain) into its own volume, 7 days
+  # kept. Same disk as the database: it guards against mistakes and bad
+  # migrations, not against losing the box. Restore: see ops/README.md.
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    command: ["sh", "/ops/backup.sh"]
+    environment:
+      PGHOST: postgres
+      PGUSER: filspay
+      PGDATABASE: filspay
+      PGPASSWORD: ${POSTGRES_PASSWORD:?run ops/init-env.sh to create ops/.env}
+    volumes:
+      - ./backup.sh:/ops/backup.sh:ro
+      - filspay_backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits: { cpus: "0.1", memory: 64M }
+    logging: *logging
+
+  # Public entry point: TLS (Let's Encrypt), the two dashboards, /v1 -> api.
+  proxy:
+    build:
+      context: ..
+      dockerfile: ops/Dockerfile.proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:?set PUBLIC_HOST in ops/.env (e.g. 165-232-180-63.sslip.io)}
+    volumes:
+      # Certificates survive recreates (Let's Encrypt rate-limits re-issuing).
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    # TLS handshakes are its cost: at 0.15 it was throttled 89-97 % of the
+    # time from 100 checkouts/s offered, and the API's fast 503s queued
+    # behind it until clients timed out.
+    deploy:
+      resources:
+        limits: { cpus: "0.4", memory: 96M }
+    logging: *logging
+
+volumes:
+  filspay_pgdata:
+  filspay_kyc:
+  caddy_data:
+  caddy_config:
+  filspay_backups:

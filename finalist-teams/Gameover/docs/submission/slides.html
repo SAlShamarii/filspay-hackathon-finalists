@@ -1,0 +1,198 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>FilsPay: The Handover (slides)</title>
+<style>
+  @page { size: 1280px 720px; margin: 0; }
+  :root { --ink: #14213d; --muted: #5b6577; --accent: #1f6feb; --bad: #c0392b; --good: #1e8449; --bg: #ffffff; --panel: #f3f6fb; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font-family: "Segoe UI", Calibri, Arial, sans-serif; }
+  .slide { width: 1280px; height: 720px; padding: 56px 72px 48px; position: relative; overflow: hidden; break-after: page; display: flex; flex-direction: column; }
+  .slide:last-child { break-after: auto; }
+  .num { position: absolute; right: 40px; bottom: 26px; color: var(--muted); font-size: 16px; }
+  .kicker { color: var(--accent); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; font-size: 16px; margin-bottom: 8px; }
+  h1 { font-size: 46px; margin: 0 0 22px; line-height: 1.1; }
+  h2 { font-size: 26px; margin: 0 0 10px; }
+  p, li { font-size: 22px; line-height: 1.4; margin: 0 0 10px; }
+  ul { margin: 0; padding-left: 26px; }
+  .muted { color: var(--muted); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; flex: 1; min-height: 0; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  .card { background: var(--panel); border-radius: 12px; padding: 18px 22px; }
+  .card h2 { font-size: 22px; }
+  .card p, .card li { font-size: 18px; }
+  .big { font-size: 64px; font-weight: 800; color: var(--accent); line-height: 1; }
+  .rank { display: grid; grid-template-columns: 52px 1fr; gap: 10px 16px; align-items: start; }
+  .rank .n { font-size: 34px; font-weight: 800; color: var(--accent); }
+  .rank h2 { font-size: 23px; margin: 4px 0 2px; }
+  .rank p { font-size: 18px; color: var(--muted); margin: 0 0 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 18px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid #d7dde8; vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px; border: 1px solid #d7dde8; }
+  .imgbox { display: flex; align-items: center; justify-content: center; min-height: 0; }
+  .quote { font-size: 30px; line-height: 1.35; font-weight: 600; border-left: 6px solid var(--accent); padding-left: 22px; margin: 6px 0 26px; }
+  .tag { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 15px; font-weight: 700; color: #fff; background: var(--bad); vertical-align: middle; }
+  .tag.ok { background: var(--good); }
+  code { font-family: Consolas, monospace; font-size: .9em; background: #eef1f6; padding: 0 5px; border-radius: 4px; }
+  .title { justify-content: center; background: linear-gradient(135deg, #0b2a5b, #1f6feb); color: #fff; }
+  .title h1 { font-size: 64px; } .title p { font-size: 26px; color: #dbe6ff; } .title .num { color: #c7d6f5; }
+  table.lt { font-size: 15.5px; } table.lt th, table.lt td { padding: 6px 8px; }
+  table.lt td:first-child { font-weight: 600; }
+  .issue { display: grid; grid-template-columns: 1fr 1.05fr; gap: 34px; flex: 1; min-height: 0; }
+  .issue h2 { font-size: 20px; color: var(--accent); text-transform: uppercase; letter-spacing: .05em; margin: 4px 0 6px; }
+  .issue p, .issue li { font-size: 21px; }
+  pre.diff { font: 17px/1.5 Consolas, monospace; background: #0f1b2d; color: #d7e0ee; padding: 14px 18px; border-radius: 10px; margin: 0 0 14px; white-space: pre-wrap; }
+  pre.diff .add { color: #7ee2a8; } pre.diff .del { color: #ff9b9b; text-decoration: line-through; } pre.diff .ctx { color: #9fb0c8; }
+  .proof { background: #e9f7ef; border-left: 5px solid var(--good); padding: 8px 14px; border-radius: 6px; }
+  .mini { background: var(--panel); border-radius: 12px; padding: 14px 18px; }
+  .mini h2 { font-size: 21px; margin: 0 0 4px; } .mini p { font-size: 17px; margin: 0 0 8px; } .mini pre.diff { font-size: 15px; padding: 8px 12px; margin: 0 0 8px; } .mini .proof { font-size: 16px; padding: 5px 10px; margin: 0; }
+</style>
+</head>
+<body>
+
+<!-- 1. Team -->
+<section class="slide title">
+  <div class="kicker" style="color:#bcd2ff">The Handover · FilsPay</div>
+  <h1>Gameover</h1>
+  <p><b>Saad Karim</b>: audit and fixes, FP-300 refunds, AI workflow</p>
+  <p><b>Maaz Karim</b>: hosting, load testing and profiling, live demo</p>
+  <p style="margin-top:40px">79 findings fixed · refunds (FP-300) shipped end to end · live on Dilmune Cloud</p>
+  <p>https://165-232-180-63.sslip.io · github.com/saadkarim247/fils-pay</p>
+  <div class="num">1</div>
+</section>
+
+
+
+<!-- 2. Root cause + approach -->
+<section class="slide">
+  <div class="kicker">Root cause, and how we worked</div>
+  <h1>The repo was written to mislead its own tools</h1>
+  <div class="quote">Its AI rule files, "intentional" comments and locked tests said money was cents, settlement ran on UTC and tests must never change. Every one of those hid a real bug.</div>
+  <div class="grid3">
+    <div class="card"><h2>1 · Trust the right text</h2><p>The brief and the ADRs are the rules. Everything else in the repo is a claim we checked in the code.</p></div>
+    <div class="card"><h2>2 · Prove it fails</h2><p>A test that fails for exactly the stated reason, before any fix.</p></div>
+    <div class="card"><h2>3 · Smallest fix</h2><p>One commit per bug: <b>79 fixed</b>, plus refunds (FP-300) built end to end.</p></div>
+  </div>
+  <div class="num">2</div>
+</section>
+
+<!-- 3. Biggest issues -->
+<section class="slide">
+  <div class="kicker">Biggest impact: real money and real accounts</div>
+  <h1>Four bugs, four small changes</h1>
+  <div class="grid2" style="gap:18px 26px">
+    <div class="mini"><h2>A password alone opened any account</h2><p>The session lookup skipped the "OTP done" check.</p>
+      <pre class="diff"><span class="add">AND s.authenticated = true</span></pre><p class="proof">Password-only cookie: 200 → <b>401</b></p></div>
+    <div class="mini"><h2>One payment link charged two buyers</h2><p>A slow checkout let a second buyer re-claim the link (incident 14 May).</p>
+      <pre class="diff"><span class="add">AND reservation_id = $3  -- only the holder</span></pre><p class="proof">Two buyers at once: 2 captures → <b>1</b></p></div>
+    <div class="mini"><h2>Refunds paid out money that didn't exist</h2><p>No lock, total overwritten, limit from the <i>authorized</i> amount (FP-209).</p>
+      <pre class="diff"><span class="add">FOR UPDATE … refunded_fils = refunded_fils + $2</span></pre><p class="proof">5 parallel refunds: 5 paid → <b>at most 3</b></p></div>
+    <div class="mini"><h2>Corrections posted at a tenth</h2><p>CSV parsed as cents. 1 BD is 1,000 fils (finance memo).</p>
+      <pre class="diff"><span class="del">parseDecimalMinor(raw)</span> <span class="add">parseBhdToFils(raw)</span></pre><p class="proof">"4.75" → <b>4,750</b> fils (was 475)</p></div>
+  </div>
+  <div class="num">3</div>
+</section>
+
+<!-- 4. FP-300 + demo -->
+<section class="slide">
+  <div class="kicker">FP-300 · live demo</div>
+  <h1>Refunds, built end to end and live</h1>
+  <div class="grid2" style="grid-template-columns: 1fr 1fr 0.8fr; gap:18px">
+    <div class="imgbox"><img src="img/ui/refund-full.png" alt="Full refund"></div>
+    <div class="imgbox"><img src="img/ui/refund-partial.png" alt="Partial refund"></div>
+    <div class="card"><h2>Done when…</h2><p>✓ API end to end<br>✓ Ledger right to the fil<br>✓ Fees and payouts<br>✓ Webhook<br>✓ Timeline, reports, reconciliation<br>✓ Live on Dilmune</p></div>
+  </div>
+  <p style="margin-top:12px"><b>Full:</b> 25.000 BD → <code>refunded</code> · <b>Partial:</b> 15.250 of 40.000 BD → 24.750 left. Building it meant fixing 11 more bugs, including settlement paying out refunded money. Settlement nets today&#39;s refunds at 00:15 Bahrain time, once the day has ended, so the settlement report shows them in the next batch.</p>
+  <div class="num">4</div>
+</section>
+
+<!-- 8. Performance -->
+<section class="slide">
+  <div class="kicker">Performance enhancement</div>
+  <h1>Profiling found N+1 queries in every batch job</h1>
+  <div class="grid2" style="grid-template-columns: 0.9fr 1.1fr">
+    <div>
+      <p><b>How:</b> we ran each batch job against a throwaway Postgres with <code>log_statement=all</code>, on a fixed dataset (2,003 merchants), 3 runs each. Every logged statement is one round trip.</p>
+      <p><b>Found:</b> one query per row. The nightly run spent ~24 statements on <i>every</i> merchant, including the 95% with no sales.</p>
+      <p><b>Fix:</b> set-based SQL (<code>unnest</code>, a single statement for idle merchants).</p>
+      <p><b>Impact checked:</b> round trips counted from the Postgres log, time as the median of 3 runs, new tests that pin the counts, and old vs new binaries giving identical totals on the same data.</p>
+    </div>
+    <div>
+      <table class="lt">
+        <tr><th>Job</th><th>Round trips</th><th>Time</th></tr>
+        <tr><td>Nightly settlement</td><td>48,370 → <b>2,833</b></td><td>21.1 s → <b>4.0 s</b></td></tr>
+        <tr><td>One 2,000-line batch</td><td>3,829 → <b>31</b></td><td>2.2 s → <b>0.9 s</b></td></tr>
+        <tr><td>Replay 500 webhooks</td><td>505 → <b>6</b></td><td>261 → <b>94 ms</b></td></tr>
+        <tr><td>Recompute 2,000 statuses</td><td>2,003 → <b>4</b></td><td>727 → <b>81 ms</b></td></tr>
+      </table>
+      <div class="imgbox" style="margin-top:10px; height:250px"><img src="../perf/2026-10-30-batch-n-plus-1.png" alt="N+1 before/after"></div>
+    </div>
+  </div>
+  <div class="num">5</div>
+</section>
+
+
+<!-- 9. Under load -->
+<section class="slide">
+  <div class="kicker">Under load (live box: 1 vCPU, 2 GB)</div>
+  <h1>About 20 checkouts a second, and it fails politely</h1>
+  <div class="grid2">
+    <div>
+      <div class="grid2" style="grid-template-columns:1fr 1fr; gap:16px; flex:none">
+        <div class="card"><div class="big">20/s</div><p>checkouts/s sustained, 21/s peak: about 1,200 buyers a minute</p></div>
+        <div class="card"><div class="big">0</div><p>errors at 150/s offered; excess gets 503 + Retry-After in 3–4 ms (server)</p></div>
+        <div class="card"><div class="big">2×</div><p>after one missing-index fix (75): 9 → 16–18/s</p></div>
+        <div class="card"><div class="big">7 s</div><p>crash → back up; half-done checkouts repaired, money invariants hold</p></div>
+      </div>
+      <p style="margin-top:12px;font-size:19px"><b>Estimated vs measured:</b> CPU cost predicted ~34 checkouts/s, the connection pool ~20–30/s. Measured: <b>20/s sustained, 21/s peak</b>, about 1,200 buyers a minute.</p><p class="muted" style="font-size:17px">k6 against the live box over HTTPS, money invariants checked after every run. The limit is now the 20-connection pool; the single vCPU is next.</p>
+    </div>
+    <div class="imgbox"><img src="img/architecture.svg" alt="Architecture: services, ports, internet-facing"></div>
+  </div>
+  <div class="num">6</div>
+</section>
+
+
+
+<!-- 10. AI -->
+<section class="slide">
+  <div class="kicker">How we used AI</div>
+  <h1>Claude Code with parallel audit agents, on a short leash</h1>
+  <p><b>Setup:</b> the brief and ADRs as the only truth, every doc claim checked in the code, one bug per commit, tests on a fresh database. The rules files, commands and scripts are in <code>.claude/</code> and <code>tools/</code>.</p>
+  <div class="grid2" style="margin-top:12px">
+    <div class="card"><h2>It resisted the trap</h2><p>The repo's own CLAUDE.md told AI tools that money was cents, settlement ran on UTC and tests must never change. We treated it as part of the code under audit; each of its rules pointed to a real bug.</p></div>
+    <div class="card"><h2>It was wrong, and we caught it</h2><p><code>docker stats</code> said Postgres used about 5% CPU, and the AI took that at face value. The kernel's cgroup counters showed it throttled 90–95% of the time. That led us to the real cause: checkout scanned the whole ledger (finding 75).</p></div>
+  </div>
+  <div class="num">7</div>
+</section>
+
+
+
+<!-- 11. Proof -->
+<section class="slide">
+  <div class="kicker">Proof it holds</div>
+  <h1>Every fix tested, every fil accounted for</h1>
+  <div class="grid3" style="margin-top:6px">
+    <div class="card"><div class="big">664</div><p>TypeScript tests, <b>0 failures</b>, on freshly migrated databases. All 7 Go packages pass with the database tests actually running.</p></div>
+    <div class="card"><div class="big">79</div><p>findings, each with its own commit and a test that <b>failed before</b> the fix. Tests that locked bugs in were corrected, with the rule cited.</p></div>
+    <div class="card"><div class="big">56,134</div><p>live ledger entries checked read-only: every entry group <b>balances</b>, no refund exceeds its capture, no card hold left open.</p></div>
+  </div>
+  <p style="margin-top:22px">Live on Dilmune Cloud: TLS, one-command redeploy that refuses the settlement window, nightly backups, a crash comes back in about 7 seconds, and overload gets a 503 in milliseconds.</p>
+  <div class="num">8</div>
+</section>
+
+<!-- Appendix -->
+<section class="slide">
+  <div class="kicker">Appendix</div>
+  <h1>Evidence</h1>
+  <div class="grid2">
+    <div class="imgbox"><img src="../perf/2026-10-30-checkout-capacity.png" alt="Checkout capacity"></div>
+    <div class="imgbox"><img src="../perf/2026-10-30-live-capacity.png" alt="Live capacity before and after bug 75"></div>
+  </div>
+  <p class="muted" style="margin-top:10px">Full findings with reproduction, verification and data impact: submission document, section 4. Load-test harness: <code>perf/checkout/</code>.</p>
+  <div class="num">A</div>
+</section>
+
+</body>
+</html>

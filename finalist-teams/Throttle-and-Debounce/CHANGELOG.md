@@ -1,0 +1,201 @@
+# Changelog
+
+All notable changes to FilsPay. Dates are deploy dates (Asia/Bahrain).
+Versions are the API image tag; settlement and reporting are versioned with
+it. Format loosely follows Keep a Changelog.
+
+## [Unreleased]
+
+### Added
+- Optional monitoring overlay (`ops/docker-compose.observability.yml`): Prometheus,
+  Grafana, alert rules with runbooks, and infrastructure, services and business
+  health dashboards. `api` and `settlement` serve `/metrics` on a separate port
+  only when `METRICS_PORT` is set. Includes the FP-205 alert on payment links with
+  more than one capture. Alerts show in Grafana only. See
+  `ops/observability/README.md`.
+- Merchant dashboard redesign: sidebar shell, a new overview hub (which is now
+  the landing page) and a transactions ledger with an inspect drawer, CSV export
+  and auto-refresh. Quests are computed from the merchant's own activity and do
+  not affect fees or payouts. Fonts are bundled, not loaded from a CDN.
+- Admin console redesign in the merchant dashboard's look: sidebar shell, cards and
+  tables, with bundled fonts. Screens and their behaviour are unchanged.
+- Swagger UI at `/v1/docs`, from a hand-written OpenAPI spec that a test keeps
+  in step with the registered routes.
+- Postman collection at `docs/api/filspay.postman_collection.json`, generated
+  from that spec, with scripts that carry OTPs, keys and ids between requests.
+- `OTP_OVERRIDE_CODE` and `ADMIN_OTP_OVERRIDE_CODE`: optional fixed OTP codes for
+  testing. Unset by default; the API refuses to boot with them in production.
+- Rate limiting backed by Postgres (migration 0097). Over budget returns `429`
+  `rate_limited` with `Retry-After`. Stricter budgets on login, OTP, signup,
+  hosted checkout, CSV export and webhook test sends.
+
+### Changed
+- ADR-0020: exports, inputs and operator output use Bahrain time (UTC+3), B110-B113.
+  The transaction CSV's `occurred_at` now ends in `+03:00` instead of `Z`; the instant
+  is unchanged, but a consumer that matches a trailing `Z` needs updating.
+- Corrected stale documentation against the ADRs: ARCHITECTURE, HANDOVER status
+  note, ADR-0002 status, RUNBOOK month-end residue, the May postmortem's root cause,
+  and CLAUDE.md. Findings from the dashboard and monitoring review are B102-B116.
+- The API now trusts `X-Forwarded-For` from private addresses (`TRUST_PROXY`),
+  and the dashboards' Vite proxies send it, so `request.ip`, including the IP
+  stored on sessions, is the real client rather than the proxy.
+
+### Fixed
+- Enforce payment-link expiry at the database claim, verify acquirer callback
+  signatures over raw request bytes, and price new captures without the platform
+  volume tier (ADR-0019). Historical fee snapshots remain unchanged.
+- Revoke the previous merchant API key atomically with its replacement and
+  audit record during admin rotation; failed rotations preserve the old key.
+- Deliver merchant/admin OTPs through Resend with controlled delivery errors
+  and server-side temporary inbox routing; prevent production code disclosure.
+- Prepare a hosting override with required secrets, private database/API ports,
+  production mode and built frontends behind HTTPS. Runtime release QA remains pending.
+- Reject malformed SHA-256 digests before decoding, neutralize spreadsheet
+  formulas in transaction CSV text, and return 404 for malformed transaction IDs.
+- Remove the batch progress bar whose percentage had no defined target.
+- Add the finance/super-admin blocked-capture screen with bounded paging,
+  original-identity retries and required acquirer evidence before release.
+- Mount durable KYC storage and document backup, migration and restore checks.
+- Keep payment links blocked through unknown capture outcomes across merchant
+  capture/void calls; audit review attempts before payment operations and retain
+  acquirer confirmation evidence for release.
+- Preserve recorded tier-priced fees during MDR recalculation. Journal fallback
+  fees atomically with batch close; refuse captures with incomplete gross or
+  inconsistent journals instead of paying from unrecorded accounting.
+- Give platform finance direct integrity reporting and a paginated cross-merchant
+  capture-review list; validate integrity report dates before querying.
+- Reuse refund request identity after ambiguous responses and preserve successful
+  payout results when other merchants fail. Report cancelled merchants explicitly.
+- Persist the ledger balance and reset display corrections when rebuilding a
+  single merchant from the CLI.
+
+## [1.9.2] - 2026-09-12
+
+### Changed
+- Volume-tier threshold updated for the platform-wide discount (d69a813).
+  No pricing change for existing merchants.
+- Dependency bumps across the workspace.
+
+### Fixed
+- Config: settlement now reads `DATABASE_URL` consistently with the other
+  services (b64cd3c).
+
+## [1.9.1] - 2026-08-22
+
+### Fixed
+- Duplicate `settlement.paid` webhooks (incident 2026-08-21). Receivers
+  should dedupe on `Webhook-Delivery-Id`.
+- Reporting worker no longer holds an extra LISTEN connection after a
+  reconnect (#398).
+
+## [1.9.0] - 2026-07-21
+
+### Added
+- Acquirer callback notes (`acquirer_callback_notes`, migration 0051) and
+  signed callback verification (`inboundVerify`).
+- Reporting saved filters (migration 0069).
+
+### Security
+- Inbound acquirer callbacks are now signature-checked and deduplicated.
+
+## [1.8.0] - 2026-06-24
+
+### Added
+- Transactions CSV export (`GET /v1/transactions/export`). Streams rows, so
+  it is safe for large merchants on the 512 MB container.
+- KYC document thumbnails.
+- Webhook delivery archive and replay for support.
+
+## [1.7.1] - 2026-06-09
+
+### Added
+- Admin: **Import adjustments** from finance's CSV sheets (BD amounts).
+- Partial-batch payout corrections in settlement (76913d3).
+
+### Fixed
+- Net payout figure now derived once per batch, so the bank instruction,
+  statement and report agree.
+
+## [1.7.0] - 2026-06-03
+
+### Added
+- Admin: **Rebuild cached balances** (finance and above). Same rebuild as the
+  `settlement rebuild-balances` CLI, exposed through the internal API.
+- Admin: **Recalculate MDR** for a merchant and date range.
+- Payout disbursement records (migration 0057).
+
+## [1.6.0] - 2026-05-20
+
+### Added
+- Admin credits with second-approver workflow above the threshold.
+- Admin: **Rebuild analytics**.
+- Platform volume tier.
+
+### Fixed
+- Incident 2026-05-14: payment links could be captured more than once when
+  the acquirer re-sent a callback. Callbacks are now deduplicated on
+  `callbackId`.
+
+## [1.5.0] - 2026-05-07
+
+### Added
+- Admin: bulk KYC approve.
+- Admin: Adjust balance (support).
+
+### Changed
+- README money section rewritten for new hires.
+
+## [1.4.0] - 2026-04-28
+
+### Added
+- `transactions.refunded_fils` (migration 0043) in preparation for refunds.
+- Refunds: `processRefund`, `refundValidation`, `refundState` helpers and the
+  dashboard `RefundDrawer` (behind a flag).
+
+## [1.3.2] - 2026-04-09
+
+### Fixed
+- README typo.
+
+## [1.3.1] - 2026-03-19
+
+### Added
+- Negotiated merchant discount (`negotiated_discount_bps`, migration 0047),
+  applied after MDR at capture and settlement.
+- Split settlement for marketplaces.
+
+### Fixed
+- March reconciliation: scheme rounding residue swept to suspense (one-off,
+  `scripts/reconcile_march.ts`). March ties out.
+
+## [1.3.0] - 2026-03-10
+
+### Added
+- Third-decimal scheme amount on export lines (`amount_3dp`, migration 0038)
+  so the residue can be posted per line.
+
+### Removed
+- `amount_3dp` reverted the same week; migration number reused for KYC
+  thumbnails.
+
+## [1.2.1] - 2026-02-24
+
+### Fixed
+- Settlement report totals (hotfix).
+
+## [1.2.0] - 2026-02-23
+
+### Added
+- Lifetime payout estimate for monitoring (migration 0040).
+
+## [1.1.0] - 2026-01-18
+
+### Added
+- Payment links.
+- Webhooks with HMAC signatures and replay.
+
+## [1.0.0] - 2025-12-14
+
+First production release: merchant onboarding with KYC, card capture and
+void, daily settlement in Asia/Bahrain business days, scheme file export
+with residue journaled at export, reporting read model.

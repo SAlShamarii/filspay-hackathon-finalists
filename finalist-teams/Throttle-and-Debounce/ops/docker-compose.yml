@@ -1,0 +1,188 @@
+# Local development stack for FilsPay. Brings up Postgres plus the three
+# services that talk to it directly (apps/api, apps/settlement,
+# apps/reporting) and runs the migration/seed jobs once against a fresh
+# database. apps/web and apps/admin are not included here — neither one
+# opens its own database connection; they call apps/api over HTTP.
+#
+#
+# The hosted demo box runs this same file. Service settings that aren't
+# listed under each service's `environment:` come from ops/.env.docker,
+# which compose picks up automatically. — AM, July
+#
+# — M?: Dockerfile.node / Dockerfile.go live next to this file. if they're
+# missing for you, pull main again.
+#
+# Run from the repo root: `docker compose -f ops/docker-compose.yml up`.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: filspay
+      POSTGRES_PASSWORD: filspay_dev_password
+      POSTGRES_DB: filspay
+    ports:
+      - "5432:5432"
+    volumes:
+      - filspay_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U filspay -d filspay"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  # One-off: applies db/migrations/*.sql, then exits. Re-run any time; the
+  # runner tracks what's already applied (db/migrate.ts's own bootstrap
+  # schema_migrations table) and skips it.
+  # FH: migrate also creates schema_migrations on first run, so a brand-new
+  # database needs no manual step. (verified on my laptop, Aug)
+  migrate:
+    build:
+      context: ..
+      dockerfile: ops/Dockerfile.node
+    command: ["npm", "run", "migrate"]
+    environment:
+      # Postgres and every app service here share the same Docker Compose
+      # bridge network and never talk to the database over a link that
+      # leaves the host, so there's no path for this connection to be
+      # intercepted in this environment.
+      DATABASE_URL: postgres://filspay:filspay_dev_password@postgres:5432/filspay?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # One-off: deterministic seed data. Re-run any time; db/seed/index.ts
+  # resets and regenerates from scratch on every invocation.
+  # Behind a profile so a plain `up` keeps existing data. Seed a fresh
+  # database with: docker compose -f ops/docker-compose.yml --profile seed up -d
+  seed:
+    profiles: ["seed"]
+    build:
+      context: ..
+      dockerfile: ops/Dockerfile.node
+    command: ["npm", "run", "seed"]
+    environment:
+      DATABASE_URL: postgres://filspay:filspay_dev_password@postgres:5432/filspay?sslmode=disable
+      # Explicit, so the seed (which loads the api config) may use the dev key.
+      NODE_ENV: development
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  api:
+    build:
+      context: ..
+      dockerfile: ops/Dockerfile.node
+    # WEBHOOK_SECRET_ENCRYPTION_KEY isn't needed here: NODE_ENV=development
+    # (set explicitly below) lets the api use its built-in 32-byte dev key.
+    # An unset or other NODE_ENV requires a real key; production must set one
+    # (see ops/README.md, "Webhook secret encryption key").
+    command: ["npx", "tsx", "apps/api/src/index.ts"]
+    ports:
+      - "3000:3000"
+    environment:
+      # One application role (filspay) owns the whole database in this
+      # environment. Every service here, and the one-off migrate/seed jobs
+      # above, authenticate as that same role, which keeps local
+      # onboarding to a single password instead of provisioning per-service
+      # grants by hand.
+      DATABASE_URL: postgres://filspay:filspay_dev_password@postgres:5432/filspay?sslmode=disable
+      NODE_ENV: development
+      # TODO(YA, Jan): give the api its own role before anything is hosted.
+      SETTLEMENT_INTERNAL_URL: http://settlement:8091
+      # Must match the settlement service's token below.
+      SETTLEMENT_INTERNAL_TOKEN: dev-token
+      # Off unless the host sets it; merchants also need the ADR-0009 opt-in.
+      FEATURE_REFUNDS: ${FEATURE_REFUNDS:-false}
+      KYC_UPLOAD_DIR: /app/data/kyc
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      OTP_EMAIL_FROM: ${OTP_EMAIL_FROM:-FilsPay <onboarding@resend.dev>}
+      OTP_EMAIL_TO_OVERRIDE: ${OTP_EMAIL_TO_OVERRIDE:-}
+      # Set false only for a load test; see ops/README.md, "Rate limiting".
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      # Adds admin routes to the /v1/docs page. Off so it isn't a public map.
+      API_DOCS_INCLUDE_INTERNAL: ${API_DOCS_INCLUDE_INTERNAL:-false}
+      # Testing only; see ops/otp-email.md. The api won't boot with these set
+      # under NODE_ENV=production.
+      OTP_OVERRIDE_CODE: ${OTP_OVERRIDE_CODE:-}
+      ADMIN_OTP_OVERRIDE_CODE: ${ADMIN_OTP_OVERRIDE_CODE:-}
+    volumes:
+      - filspay_kyc:/app/data/kyc
+    # Wait for the schema, and for the seed when the seed profile is on.
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      seed:
+        condition: service_completed_successfully
+        required: false
+
+  settlement:
+    build:
+      context: ..
+      dockerfile: ops/Dockerfile.go
+    # The daemon has no token fallback: it exits at boot unless
+    # SETTLEMENT_INTERNAL_TOKEN is set (set below, matching the api's).
+    command: ["./settlement", "daemon"]
+    environment:
+      # Log timestamps only (ADR-0020); business days load Asia/Bahrain themselves.
+      TZ: Asia/Bahrain
+      DATABASE_URL: postgres://filspay:filspay_dev_password@postgres:5432/filspay?sslmode=disable
+      # Batch close and scheme export get their own pool so a long close
+      # can't starve the API's connections.
+      PGCONN_SETTLEMENT: postgres://filspay:filspay_dev_password@postgres:5432/filspay?sslmode=disable
+      # The daemon exits at boot without this (config.RequireInternalToken).
+      SETTLEMENT_INTERNAL_TOKEN: dev-token
+    # Never let the daemon close batches against a half-seeded database.
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      seed:
+        condition: service_completed_successfully
+        required: false
+
+  reporting:
+    build:
+      context: ..
+      dockerfile: ops/Dockerfile.node
+    # No subcommand = `worker`. (MK)
+    command: ["npx", "tsx", "apps/reporting/src/index.ts"]
+    environment:
+      DATABASE_URL: postgres://filspay:filspay_dev_password@postgres:5432/filspay?sslmode=disable
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      seed:
+        condition: service_completed_successfully
+        required: false
+
+  # Vite dev servers. They have no database connection; the browser calls
+  # /v1 on their own origin and Vite proxies it to the api over the compose
+  # network, so cookies are first-party and no CORS is needed.
+  web:
+    build:
+      context: ..
+      dockerfile: ops/Dockerfile.node
+    command: ["npm", "run", "dev", "-w", "apps/web", "--", "--host", "0.0.0.0"]
+    environment:
+      API_PROXY_TARGET: http://api:3000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+
+  admin:
+    build:
+      context: ..
+      dockerfile: ops/Dockerfile.node
+    command:
+      ["npm", "run", "dev", "-w", "apps/admin", "--", "--host", "0.0.0.0"]
+    environment:
+      API_PROXY_TARGET: http://api:3000
+    ports:
+      - "5174:5174"
+    depends_on:
+      - api
+
+volumes:
+  filspay_pgdata:
+  filspay_kyc:
